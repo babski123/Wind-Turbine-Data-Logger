@@ -1,10 +1,26 @@
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
+#include <Arduino.h>
+#include <DS3231.h>
+#include <SPI.h>
+#include <SD.h>
 
-#define PIS 3      // Photointerrupter Pin
-#define BTN_PIN 2  // Button Pin
+#define BTN_PIN 2                // Button Pin
+#define PIS 3                    // Photointerrupter Pin
+#define PULSES_PER_REVOLUTION 1  // Number of blades
+#define CS 4                     // SD card Chip select Pin
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD config
+DS3231 myRTC;
+
+unsigned long lastLogTime = 0;
+const unsigned long logInterval = 5000;  // Log data every 5000 milliseconds (5 seconds)
+
+// 12 hour mode
+bool mode12h = true;
+bool CenturyBit;
+bool h12;
+bool hPM;
 
 /*
 LCD States:
@@ -15,30 +31,73 @@ LCD States:
 4 = Current Only
 5 = Power Only
 */
-int lcdState = 0;
+int lcdState = -1;
 int btnState = 0;
 int lstBtnState = 0;
 int prevLcdState = -1;  // Initialize with a value different from any valid state
 
+volatile unsigned long pulseCount = 0;
+volatile unsigned long lastPulseTime = 0;
+unsigned int rpm = 0;
+
 void setup() {
   Serial.begin(9600);
+  Wire.begin();
   lcdInit();
-  pinMode(BTN_PIN, INPUT_PULLUP);  // Use internal pull-up for the button
+  rtcInit();
+  sdCardInit();
+  
+  pinMode(BTN_PIN, INPUT_PULLUP);                                    // Use internal pull-up for the button
+  pinMode(PIS, INPUT_PULLUP);                                        // Assuming the photo interrupter outputs LOW when interrupted
+  attachInterrupt(digitalPinToInterrupt(PIS), countPulse, FALLING);  // Trigger on falling edge (light blocked)
 }
 
 void loop() {
   readBtn();
   stateMachine();
-  delay(50);
+  logData(readRPM(), readTorque(), readVoltage(), readCurrent(), readVoltage());
+  delay(100);
+}
+
+void sdCardInit() {
+  SD.begin(CS);
+}
+
+void rtcInit() {
+  myRTC.setClockMode(mode12h);
+  /*
+  // default secs
+  byte theSecs = 0;
+  // default mins
+  byte theMins = 21;
+  // default hr
+  byte theHr = 23;
+  // Day of the Week
+  byte theDoW = 1;
+  // day of the month
+  byte theDate = 14;
+  // month
+  byte theMonth = 4;
+  // year
+  byte theYear = 25;
+  myRTC.setSecond(theSecs);
+  myRTC.setMinute(theMins);
+  myRTC.setHour(theHr);
+  myRTC.setDoW(theDoW);
+  myRTC.setDate(theDate);
+  myRTC.setMonth(theMonth);
+  myRTC.setYear(theYear);
+  */
 }
 
 void lcdInit() {
   lcd.init();
   lcd.backlight();
+  lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Wind Turbine");
-  lcd.setCursor(0, 1);
   lcd.print("Data Logger");
+  lcd.setCursor(0, 1);
+  lcd.print("Press Button ...");
   prevLcdState = lcdState;  // Initialize prevLcdState after initial display
 }
 
@@ -65,7 +124,7 @@ void readBtn() {
 
   if (btnState != lstBtnState) {
     if (btnState == LOW) {  // Button press is usually LOW with pull-up
-      if (lcdState == 5) {
+      if (lcdState == 6) {
         lcdState = 0;
       } else {
         lcdState++;
@@ -84,10 +143,10 @@ void stateMachine() {
   if (lcdState != prevLcdState) {
     switch (lcdState) {
       case 0:
-        updateLcd("V:     I:     ", "P:       ");
+        updateLcd("V:      I:     ", "P:       ");
         break;
       case 1:
-        updateLcd("RPM:        ", "");
+        updateLcd("RPM:        ", "     ");
         break;
       case 2:
         updateLcd("TORQUE:       ", "");
@@ -101,6 +160,9 @@ void stateMachine() {
       case 5:
         updateLcd("Power:        ", "");
         break;
+      case 6:
+        updateLcd("", "");
+        break;
     }
     prevLcdState = lcdState;
   }
@@ -108,17 +170,18 @@ void stateMachine() {
   // Update sensor values
   switch (lcdState) {
     case 0:
-      lcd.setCursor(3, 0);
+      lcd.setCursor(2, 0);
       printValue(readVoltage());
-      lcd.setCursor(9, 0);
+      lcd.setCursor(10, 0);
       printValue(readCurrent());
-      lcd.setCursor(3, 1);
+      lcd.setCursor(2, 1);
       printValue(calculatePower(readVoltage(), readCurrent()));
       break;
     case 1:
-      lcd.setCursor(5, 0);
-      printValue(readRPM());
-      lcd.print(" RPM");
+      lcd.setCursor(0, 1);
+      lcd.print("      ");
+      lcd.setCursor(0, 1);
+      lcd.print(readRPM());
       break;
     case 2:
       lcd.setCursor(8, 0);
@@ -140,6 +203,12 @@ void stateMachine() {
       printValue(calculatePower(readVoltage(), readCurrent()));
       lcd.print(" W");
       break;
+    case 6:
+      lcd.setCursor(0, 0);
+      lcd.print(getDateAndTime(true));
+      lcd.setCursor(0, 1);
+      lcd.print(getDateAndTime(false));
+      break;
   }
 }
 
@@ -153,9 +222,34 @@ float calculatePower(float v, float i) {
   return v * i;
 }
 
+void countPulse() {
+  pulseCount++;
+  lastPulseTime = micros();  // Record the time of the last pulse
+}
+
 int readRPM() {
-  // Your code to read RPM
-  return 1234;
+  static unsigned long lastTime = 0;
+  static unsigned long previousPulseCount = 0;
+
+  unsigned long currentTime = millis();
+  unsigned long timeInterval = currentTime - lastTime;
+
+  // Debounce and ensure a reasonable time has passed since the last calculation
+  if (timeInterval >= 100) {  // Update RPM every 100 milliseconds (adjust as needed)
+    cli();                    // Disable interrupts temporarily for atomic read
+    unsigned long currentPulseCount = pulseCount;
+    sei();  // Re-enable interrupts
+
+    unsigned long pulseDifference = currentPulseCount - previousPulseCount;
+
+    // Calculate RPM:
+    // (Number of pulses in the interval / Time interval in seconds) * 60 seconds/minute
+    rpm = (pulseDifference * 1000UL * 60UL) / (timeInterval * PULSES_PER_REVOLUTION);
+
+    previousPulseCount = currentPulseCount;
+    lastTime = currentTime;
+  }
+  return rpm;
 }
 
 float readTorque() {
@@ -170,5 +264,84 @@ float readVoltage() {
 
 float readCurrent() {
   // Your code to read current
-  return 2.10;
+  return 12.10;
+}
+
+String getDateAndTime(bool returnDate) {
+  if (returnDate) {
+    String dateString = "";
+    dateString += "20";
+    dateString += myRTC.getYear();
+    dateString += "-";
+    if (myRTC.getMonth(CenturyBit) < 10) dateString += "0";
+    dateString += myRTC.getMonth(CenturyBit);
+    dateString += "-";
+    if (myRTC.getDate() < 10) dateString += "0";
+    dateString += myRTC.getDate();
+    return dateString;
+  } else {
+    String timeString = "";
+    int hour = myRTC.getHour(h12, hPM);
+    int minute = myRTC.getMinute();
+    int second = myRTC.getSecond();
+
+    if (hour < 10) timeString += "0";
+    timeString += hour;
+    timeString += ":";
+    if (minute < 10) timeString += "0";
+    timeString += minute;
+    timeString += ":";
+    if (second < 10) timeString += "0";
+    timeString += second;
+
+    if (h12 == true) {  // 12-hour mode
+      if (hPM == true) {
+        timeString += " PM";
+      } else {
+        timeString += " AM";
+      }
+    }
+    return timeString;
+  }
+}
+
+void logData(int rpm, int torque, float voltage, float current, float power) {
+  unsigned long currentTime = millis();
+  if (currentTime - lastLogTime >= logInterval) {
+    lastLogTime = currentTime;
+
+    if (!SD.exists("data.csv")) {
+      File dataFile = SD.open("data.csv", FILE_WRITE);
+      if (dataFile) {
+        dataFile.println("Timestamp,RPM,Torque(Nm),Voltage(V),Current(A),Power(W)");
+        dataFile.close();
+        Serial.println("Headers written to data.csv");
+      } else {
+        Serial.println("Error creating/opening data.csv for headers");
+        return;
+      }
+    }
+
+    File dataFile = SD.open("data.csv", FILE_WRITE);
+    if (dataFile) {
+      dataFile.print(getDateAndTime(true));
+      dataFile.print(" ");
+      dataFile.print(getDateAndTime(false));
+      dataFile.print(",");
+      dataFile.print(rpm);
+      dataFile.print(",");
+      dataFile.print(torque);
+      dataFile.print(",");
+      dataFile.print(voltage);
+      dataFile.print(",");
+      dataFile.print(current);
+      dataFile.print(",");
+      dataFile.println(power);
+
+      dataFile.close();
+      Serial.println("Data logged to data.csv");
+    } else {
+      Serial.println("Error opening data.csv for writing");
+    }
+  }
 }
