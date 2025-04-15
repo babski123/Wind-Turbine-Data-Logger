@@ -15,11 +15,13 @@ DS3231 myRTC;
 
 unsigned long lastLogTime = 0;
 const unsigned long logInterval = 5000;  // Log data every 5000 milliseconds (5 seconds)
+int dataLogCountdown = 11;               // the countdown before logging starts
+unsigned long countdownTimer = 0;        // the timer for countdown
+bool isLogging = false;                  // flag if logger is active
 
 // 12 hour mode
-bool mode12h = true;
 bool CenturyBit;
-bool h12;
+bool h12 = true;
 bool hPM;
 
 /*
@@ -46,7 +48,7 @@ void setup() {
   lcdInit();
   rtcInit();
   sdCardInit();
-  
+
   pinMode(BTN_PIN, INPUT_PULLUP);                                    // Use internal pull-up for the button
   pinMode(PIS, INPUT_PULLUP);                                        // Assuming the photo interrupter outputs LOW when interrupted
   attachInterrupt(digitalPinToInterrupt(PIS), countPulse, FALLING);  // Trigger on falling edge (light blocked)
@@ -64,7 +66,7 @@ void sdCardInit() {
 }
 
 void rtcInit() {
-  myRTC.setClockMode(mode12h);
+  myRTC.setClockMode(h12);
   /*
   // default secs
   byte theSecs = 0;
@@ -124,16 +126,13 @@ void readBtn() {
 
   if (btnState != lstBtnState) {
     if (btnState == LOW) {  // Button press is usually LOW with pull-up
-      if (lcdState == 6) {
+      if (lcdState == 7) {
         lcdState = 0;
+        isLogging = false;      // stop logging
+        dataLogCountdown = 11;  // reset dataLogger countdown
       } else {
         lcdState++;
       }
-      Serial.println("on");
-      Serial.print("LCD State: ");
-      Serial.println(lcdState);
-    } else {
-      Serial.println("off");
     }
   }
   lstBtnState = btnState;
@@ -162,6 +161,9 @@ void stateMachine() {
         break;
       case 6:
         updateLcd("", "");
+        break;
+      case 7:
+        updateLcd("Logging Data in", "10s ...");
         break;
     }
     prevLcdState = lcdState;
@@ -208,6 +210,20 @@ void stateMachine() {
       lcd.print(getDateAndTime(true));
       lcd.setCursor(0, 1);
       lcd.print(getDateAndTime(false));
+      break;
+    case 7:
+      if (millis() - countdownTimer >= 1000 && dataLogCountdown > 0) {
+        countdownTimer = millis();
+        dataLogCountdown--;
+        lcd.setCursor(0, 1);
+        lcd.print("  ");
+        lcd.setCursor(0, 1);
+        lcd.print(dataLogCountdown);
+      }
+      if (dataLogCountdown <= 0 && !isLogging) {
+        isLogging = true;  // start logging after countdown
+        updateLcd("Data Logger", "Is Running");
+      }
       break;
   }
 }
@@ -306,42 +322,45 @@ String getDateAndTime(bool returnDate) {
 }
 
 void logData(int rpm, int torque, float voltage, float current, float power) {
-  unsigned long currentTime = millis();
-  if (currentTime - lastLogTime >= logInterval) {
-    lastLogTime = currentTime;
+  // we log data only if isLogging = true
+  if (isLogging) {
+    unsigned long currentTime = millis();
+    if (currentTime - lastLogTime >= logInterval) {
+      lastLogTime = currentTime;
 
-    if (!SD.exists("data.csv")) {
+      if (!SD.exists("data.csv")) {
+        File dataFile = SD.open("data.csv", FILE_WRITE);
+        if (dataFile) {
+          dataFile.println("Timestamp,RPM,Torque(Nm),Voltage(V),Current(A),Power(W)");
+          dataFile.close();
+          Serial.println("Headers written to data.csv");
+        } else {
+          Serial.println("Error creating/opening data.csv for headers");
+          return;
+        }
+      }
+
       File dataFile = SD.open("data.csv", FILE_WRITE);
       if (dataFile) {
-        dataFile.println("Timestamp,RPM,Torque(Nm),Voltage(V),Current(A),Power(W)");
+        dataFile.print(getDateAndTime(true));
+        dataFile.print(" ");
+        dataFile.print(getDateAndTime(false));
+        dataFile.print(",");
+        dataFile.print(rpm);
+        dataFile.print(",");
+        dataFile.print(torque);
+        dataFile.print(",");
+        dataFile.print(voltage);
+        dataFile.print(",");
+        dataFile.print(current);
+        dataFile.print(",");
+        dataFile.println(power);
+
         dataFile.close();
-        Serial.println("Headers written to data.csv");
+        Serial.println("Data logged to data.csv");
       } else {
-        Serial.println("Error creating/opening data.csv for headers");
-        return;
+        Serial.println("Error opening data.csv for writing");
       }
-    }
-
-    File dataFile = SD.open("data.csv", FILE_WRITE);
-    if (dataFile) {
-      dataFile.print(getDateAndTime(true));
-      dataFile.print(" ");
-      dataFile.print(getDateAndTime(false));
-      dataFile.print(",");
-      dataFile.print(rpm);
-      dataFile.print(",");
-      dataFile.print(torque);
-      dataFile.print(",");
-      dataFile.print(voltage);
-      dataFile.print(",");
-      dataFile.print(current);
-      dataFile.print(",");
-      dataFile.println(power);
-
-      dataFile.close();
-      Serial.println("Data logged to data.csv");
-    } else {
-      Serial.println("Error opening data.csv for writing");
     }
   }
 }
