@@ -47,6 +47,7 @@ volatile unsigned long pulseCount = 0;
 volatile unsigned long lastPulseTime = 0;
 unsigned int rpm = 0;
 int prevTorque = 999;
+int prevRpm = -1;
 
 void setup() {
   Serial.begin(9600);
@@ -193,21 +194,33 @@ void stateMachine() {
       printValue(calculatePower(readVoltage(), readCurrent()));
       break;
     case 1:
-      lcd.setCursor(0, 1);
-      lcd.print("      ");
-      lcd.setCursor(0, 1);
-      lcd.print(readRPM());
+      int currentRpm;
+      currentRpm = readRPM();
+      if (prevRpm != currentRpm) {
+        lcd.setCursor(0, 1);
+        lcd.print("      ");
+        lcd.setCursor(0, 1);
+        lcd.print(readRPM());
+      } else {
+        lcd.setCursor(0, 1);
+        lcd.print(readRPM());
+      }
+      prevRpm = currentRpm;
       break;
     case 2:
-      int currentTorque = readTorque();
+      int currentTorque;
+      currentTorque = readTorque();
       if (prevTorque != currentTorque) {
         lcd.setCursor(0, 1);
         lcd.print("      ");
         lcd.setCursor(0, 1);
         lcd.print(currentTorque);
-        lcd.print(" Nm");  // Example unit
-        prevTorque = currentTorque;
+      } else {
+        lcd.setCursor(0, 1);
+        lcd.print(currentTorque);
       }
+      lcd.print(" Nm");
+      prevTorque = currentTorque;
       break;
     case 3:
       lcd.setCursor(9, 0);
