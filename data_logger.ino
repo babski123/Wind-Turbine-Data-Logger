@@ -4,14 +4,19 @@
 #include <DS3231.h>
 #include <SPI.h>
 #include <SD.h>
+#include <HX711.h>
 
-#define BTN_PIN 2                // Button Pin
-#define PIS 3                    // Photointerrupter Pin
-#define PULSES_PER_REVOLUTION 1  // Number of blades
-#define CS 4                     // SD card Chip select Pin
+#define BTN_PIN 2                  // Button Pin
+#define PIS 3                      // Photointerrupter Pin
+#define PULSES_PER_REVOLUTION 1    // Number of blades
+#define CS 4                       // SD card Chip select Pin
+#define calibration_factor 1980.0  // HX711 Calibration Factor
+#define DOUT 7                     // HX711 Data pin
+#define CLK 6                      // HX711 Clock pin
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD config
 DS3231 myRTC;
+HX711 scale;
 
 unsigned long lastLogTime = 0;
 const unsigned long logInterval = 5000;  // Log data every 5000 milliseconds (5 seconds)
@@ -41,6 +46,7 @@ int prevLcdState = -1;  // Initialize with a value different from any valid stat
 volatile unsigned long pulseCount = 0;
 volatile unsigned long lastPulseTime = 0;
 unsigned int rpm = 0;
+int prevTorque = 999;
 
 void setup() {
   Serial.begin(9600);
@@ -48,6 +54,7 @@ void setup() {
   lcdInit();
   rtcInit();
   sdCardInit();
+  scaleInit();
 
   pinMode(BTN_PIN, INPUT_PULLUP);                                    // Use internal pull-up for the button
   pinMode(PIS, INPUT_PULLUP);                                        // Assuming the photo interrupter outputs LOW when interrupted
@@ -59,6 +66,12 @@ void loop() {
   stateMachine();
   logData(readRPM(), readTorque(), readVoltage(), readCurrent(), readVoltage());
   delay(100);
+}
+
+void scaleInit() {
+  scale.begin(DOUT, CLK);
+  scale.set_scale(calibration_factor);
+  scale.tare();
 }
 
 void sdCardInit() {
@@ -186,9 +199,15 @@ void stateMachine() {
       lcd.print(readRPM());
       break;
     case 2:
-      lcd.setCursor(8, 0);
-      printValue(readTorque());
-      lcd.print(" Nm");  // Example unit
+      int currentTorque = readTorque();
+      if (prevTorque != currentTorque) {
+        lcd.setCursor(0, 1);
+        lcd.print("      ");
+        lcd.setCursor(0, 1);
+        lcd.print(currentTorque);
+        lcd.print(" Nm");  // Example unit
+        prevTorque = currentTorque;
+      }
       break;
     case 3:
       lcd.setCursor(9, 0);
@@ -268,9 +287,14 @@ int readRPM() {
   return rpm;
 }
 
-float readTorque() {
+int readTorque() {
   // Your code to read torque
-  return 5.67;
+  int t = scale.get_units();
+  if (t < 0) {
+    return 0;
+  } else {
+    return t;
+  }
 }
 
 float readVoltage() {
