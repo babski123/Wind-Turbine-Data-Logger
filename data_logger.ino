@@ -5,6 +5,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <HX711.h>
+#include <EmonLib.h>
 
 #define BTN_PIN 2                  // Button Pin
 #define PIS 3                      // Photointerrupter Pin
@@ -13,10 +14,12 @@
 #define calibration_factor 1980.0  // HX711 Calibration Factor
 #define DOUT 7                     // HX711 Data pin
 #define CLK 6                      // HX711 Clock pin
+#define SCT_PIN A1                 //SCT-013-30A pin
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD config
 DS3231 myRTC;
 HX711 scale;
+EnergyMonitor emon1;
 
 unsigned long lastLogTime = 0;
 const unsigned long logInterval = 5000;  // Log data every 5000 milliseconds (5 seconds)
@@ -56,6 +59,7 @@ void setup() {
   rtcInit();
   sdCardInit();
   scaleInit();
+  emonInit();
 
   pinMode(BTN_PIN, INPUT_PULLUP);                                    // Use internal pull-up for the button
   pinMode(PIS, INPUT_PULLUP);                                        // Assuming the photo interrupter outputs LOW when interrupted
@@ -67,6 +71,10 @@ void loop() {
   stateMachine();
   logData(readRPM(), readTorque(), readVoltage(), readCurrent(), readVoltage());
   delay(100);
+}
+
+void emonInit() {
+  emon1.current(SCT_PIN, 85.1);
 }
 
 void scaleInit() {
@@ -317,7 +325,8 @@ float readVoltage() {
 
 float readCurrent() {
   // Your code to read current
-  return 12.10;
+  return emon1.calcIrms(1480);
+  //return 0.15;
 }
 
 String getDateAndTime(bool returnDate) {
