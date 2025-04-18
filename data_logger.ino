@@ -6,6 +6,7 @@
 #include <SD.h>
 #include <HX711.h>
 #include <EmonLib.h>
+#include <ZMPT101B.h>
 
 #define BTN_PIN 2                  // Button Pin
 #define PIS 3                      // Photointerrupter Pin
@@ -15,11 +16,13 @@
 #define DOUT 7                     // HX711 Data pin
 #define CLK 6                      // HX711 Clock pin
 #define SCT_PIN A1                 //SCT-013-30A pin
+#define SENSITIVITY 1110.0f        //ZMPT101B SENSITIVITY
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD config
 DS3231 myRTC;
 HX711 scale;
 EnergyMonitor emon1;
+ZMPT101B voltageSensor(A0, 60.0);
 
 unsigned long lastLogTime = 0;
 const unsigned long logInterval = 5000;  // Log data every 5000 milliseconds (5 seconds)
@@ -62,6 +65,7 @@ void setup() {
   sdCardInit();
   scaleInit();
   emonInit();
+  voltSensorInit();
 
   pinMode(BTN_PIN, INPUT_PULLUP);                                    // Use internal pull-up for the button
   pinMode(PIS, INPUT_PULLUP);                                        // Assuming the photo interrupter outputs LOW when interrupted
@@ -73,6 +77,10 @@ void loop() {
   stateMachine();
   logData();
   delay(100);
+}
+
+void voltSensorInit() {
+  voltageSensor.setSensitivity(SENSITIVITY);
 }
 
 void emonInit() {
@@ -351,7 +359,7 @@ int readTorque() {
 
 float readVoltage() {
   // Your code to read voltage
-  return 12.34;
+  return voltageSensor.getRmsVoltage();
 }
 
 float readCurrent() {
