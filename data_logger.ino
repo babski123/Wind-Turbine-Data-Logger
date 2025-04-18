@@ -52,6 +52,8 @@ unsigned int rpm = 0;
 int prevTorque = 999;
 int prevRpm = -1;
 
+unsigned long lastSensorsUpdate = 0;
+
 void setup() {
   Serial.begin(9600);
   Wire.begin();
@@ -69,7 +71,7 @@ void setup() {
 void loop() {
   readBtn();
   stateMachine();
-  logData(readRPM(), readTorque(), readVoltage(), readCurrent(), readVoltage());
+  logData();
   delay(100);
 }
 
@@ -194,26 +196,32 @@ void stateMachine() {
   // Update sensor values
   switch (lcdState) {
     case 0:
-      lcd.setCursor(2, 0);
-      printValue(readVoltage());
-      lcd.setCursor(10, 0);
-      printValue(readCurrent());
-      lcd.setCursor(2, 1);
-      printValue(calculatePower(readVoltage(), readCurrent()));
+      if (millis() - lastSensorsUpdate > 1000) {
+        lcd.setCursor(2, 0);
+        printValue(readVoltage());
+        lcd.setCursor(10, 0);
+        printValue(readCurrent());
+        lcd.setCursor(2, 1);
+        printValue(calculatePower(readVoltage(), readCurrent()));
+        lastSensorsUpdate = millis();
+      }
       break;
     case 1:
-      int currentRpm;
-      currentRpm = readRPM();
-      if (prevRpm != currentRpm) {
-        lcd.setCursor(0, 1);
-        lcd.print("      ");
-        lcd.setCursor(0, 1);
-        lcd.print(readRPM());
-      } else {
-        lcd.setCursor(0, 1);
-        lcd.print(readRPM());
+      if (millis() - lastSensorsUpdate > 1000) {
+        int currentRpm;
+        currentRpm = readRPM();
+        if (prevRpm != currentRpm) {
+          lcd.setCursor(0, 1);
+          lcd.print("      ");
+          lcd.setCursor(0, 1);
+          lcd.print(readRPM());
+        } else {
+          lcd.setCursor(0, 1);
+          lcd.print(readRPM());
+        }
+        prevRpm = currentRpm;
+        lastSensorsUpdate = millis();
       }
-      prevRpm = currentRpm;
       break;
     case 2:
       int currentTorque;
@@ -236,14 +244,20 @@ void stateMachine() {
       lcd.print(" V");
       break;
     case 4:
-      lcd.setCursor(9, 0);
-      printValue(readCurrent());
-      lcd.print(" A");
+      if (millis() - lastSensorsUpdate > 1000) {
+        lcd.setCursor(9, 0);
+        printValue(readCurrent());
+        lcd.print(" A");
+        lastSensorsUpdate = millis();
+      }
       break;
     case 5:
-      lcd.setCursor(7, 0);
-      printValue(calculatePower(readVoltage(), readCurrent()));
-      lcd.print(" W");
+      if (millis() - lastSensorsUpdate > 1000) {
+        lcd.setCursor(7, 0);
+        printValue(calculatePower(readVoltage(), readCurrent()));
+        lcd.print(" W");
+        lastSensorsUpdate = millis();
+      }
       break;
     case 6:
       lcd.setCursor(0, 0);
@@ -367,9 +381,20 @@ String getDateAndTime(bool returnDate) {
   }
 }
 
-void logData(int rpm, int torque, float voltage, float current, float power) {
+void logData() {
+  int _rpm;
+  int _torque;
+  float _voltage;
+  float _current;
+  float _power;
   // we log data only if isLogging = true
   if (isLogging) {
+    _rpm = readRPM();
+    _torque = readTorque();
+    _voltage = readVoltage();
+    _current = readCurrent();
+    _power = _voltage * _current;
+
     unsigned long currentTime = millis();
     if (currentTime - lastLogTime >= logInterval) {
       lastLogTime = currentTime;
@@ -392,15 +417,15 @@ void logData(int rpm, int torque, float voltage, float current, float power) {
         dataFile.print(" ");
         dataFile.print(getDateAndTime(false));
         dataFile.print(",");
-        dataFile.print(rpm);
+        dataFile.print(_rpm);
         dataFile.print(",");
-        dataFile.print(torque);
+        dataFile.print(_torque);
         dataFile.print(",");
-        dataFile.print(voltage);
+        dataFile.print(_voltage);
         dataFile.print(",");
-        dataFile.print(current);
+        dataFile.print(_current);
         dataFile.print(",");
-        dataFile.println(power);
+        dataFile.println(_power);
 
         dataFile.close();
         Serial.println("Data logged to data.csv");
