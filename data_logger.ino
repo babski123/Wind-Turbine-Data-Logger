@@ -228,14 +228,14 @@ void stateMachine() {
       currentTorque = readTorque();
       if (prevTorque != currentTorque) {
         lcd.setCursor(0, 1);
-        lcd.print("      ");
+        lcd.print("       ");
         lcd.setCursor(0, 1);
         lcd.print(currentTorque);
       } else {
         lcd.setCursor(0, 1);
         lcd.print(currentTorque);
       }
-      lcd.print(" Nm");
+      lcd.print(" Nmm");
       prevTorque = currentTorque;
       break;
     case 3:
@@ -323,14 +323,31 @@ int readRPM() {
 }
 
 int readTorque() {
-  // Your code to read torque
-  int t = scale.get_units();
-  if (t < 0) {
+  // Read force in grams from the load cell
+  float grams = scale.get_units();
+
+  // Ignore negative values
+  if (grams < 0) {
     return 0;
-  } else {
-    return t;
   }
+
+  // Constants
+  const float g = 9.81;           // Acceleration due to gravity (m/s^2)
+  const float armLength = 100.0;  // Arm length in millimeters
+
+  // Convert grams to kg
+  float mass_kg = grams / 1000.0;
+
+  // Calculate force in Newtons
+  float force_N = mass_kg * g;
+
+  // Torque in N·mm = Force (N) × Arm length (mm)
+  float torque_Nmm = force_N * armLength;
+
+  // Return as integer
+  return (int)torque_Nmm;
 }
+
 
 float readVoltage() {
   // Your code to read voltage
@@ -402,7 +419,7 @@ void logData() {
       if (!SD.exists("data.csv")) {
         File dataFile = SD.open("data.csv", FILE_WRITE);
         if (dataFile) {
-          dataFile.println("Timestamp,RPM,Torque(Nm),Voltage(V),Current(A),Power(W)");
+          dataFile.println("Timestamp,RPM,Torque(Nmm),Voltage(V),Current(A),Power(W)");
           dataFile.close();
           Serial.println("Headers written to data.csv");
         } else {
