@@ -247,9 +247,12 @@ void stateMachine() {
       prevTorque = currentTorque;
       break;
     case 3:
-      lcd.setCursor(9, 0);
-      printValue(readVoltage());
-      lcd.print(" V");
+      if (millis() - lastSensorsUpdate > 1000) {
+        lcd.setCursor(9, 0);
+        printValue(readVoltage());
+        lcd.print(" V");
+        lastSensorsUpdate = millis();
+      }
       break;
     case 4:
       if (millis() - lastSensorsUpdate > 1000) {
