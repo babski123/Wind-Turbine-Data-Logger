@@ -16,13 +16,14 @@
 #define DOUT 7                     // HX711 Data pin
 #define CLK 6                      // HX711 Clock pin
 #define SCT_PIN A1                 //SCT-013-30A pin
-#define SENSITIVITY 1110.0f        //ZMPT101B SENSITIVITY
+#define SENSITIVITY 1137.5f        //ZMPT101B SENSITIVITY
+#define VOLT_SENSOR_PIN A0         // ZMPT101B PIN
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);  // LCD config
 DS3231 myRTC;
 HX711 scale;
 EnergyMonitor emon1;
-ZMPT101B voltageSensor(A0, 60.0);
+ZMPT101B voltageSensor(VOLT_SENSOR_PIN, 60.0);  // 60hz - change as needed
 
 unsigned long lastLogTime = 0;
 const unsigned long logInterval = 5000;  // Log data every 5000 milliseconds (5 seconds)
@@ -54,6 +55,7 @@ volatile unsigned long lastPulseTime = 0;
 unsigned int rpm = 0;
 int prevTorque = 999;
 int prevRpm = -1;
+const float armLength = 100.0;  // Arm length in millimeters to measure torque
 
 unsigned long lastSensorsUpdate = 0;
 
@@ -174,7 +176,7 @@ void stateMachine() {
   if (lcdState != prevLcdState) {
     switch (lcdState) {
       case 0:
-        updateLcd("V:      I:     ", "P:       ");
+        updateLcd("", "");
         break;
       case 1:
         updateLcd("RPM:        ", "     ");
@@ -205,12 +207,12 @@ void stateMachine() {
   switch (lcdState) {
     case 0:
       if (millis() - lastSensorsUpdate > 1000) {
-        lcd.setCursor(2, 0);
-        printValue(readVoltage());
-        lcd.setCursor(10, 0);
-        printValue(readCurrent());
-        lcd.setCursor(2, 1);
-        printValue(calculatePower(readVoltage(), readCurrent()));
+        lcd.setCursor(0, 0);
+        printValueWithUnit(readVoltage(), "V");
+        lcd.setCursor(8, 0);
+        printValueWithUnit(readCurrent(), "A");
+        lcd.setCursor(0, 1);
+        printValueWithUnit(calculatePower(readVoltage(), readCurrent()), "W");
         lastSensorsUpdate = millis();
       }
       break;
@@ -248,25 +250,22 @@ void stateMachine() {
       break;
     case 3:
       if (millis() - lastSensorsUpdate > 1000) {
-        lcd.setCursor(9, 0);
-        printValue(readVoltage());
-        lcd.print(" V");
+        lcd.setCursor(0, 1);
+        printValueWithUnit(readVoltage(), "V");
         lastSensorsUpdate = millis();
       }
       break;
     case 4:
       if (millis() - lastSensorsUpdate > 1000) {
-        lcd.setCursor(9, 0);
-        printValue(readCurrent());
-        lcd.print(" A");
+        lcd.setCursor(0, 1);
+        printValueWithUnit(readCurrent(), "A");
         lastSensorsUpdate = millis();
       }
       break;
     case 5:
       if (millis() - lastSensorsUpdate > 1000) {
-        lcd.setCursor(7, 0);
-        printValue(calculatePower(readVoltage(), readCurrent()));
-        lcd.print(" W");
+        lcd.setCursor(0, 1);
+        printValueWithUnit(calculatePower(readVoltage(), readCurrent()), "W");
         lastSensorsUpdate = millis();
       }
       break;
@@ -295,8 +294,20 @@ void stateMachine() {
 
 // Helper function to print values (can be customized for formatting)
 void printValue(float value) {
-  lcd.print(value, 2);  // Print with 2 decimal places
+  char buffer[7];                // 6 characters + null terminator
+  dtostrf(value, 6, 2, buffer);  // width=6, 2 decimal places
+  lcd.print(buffer);
 }
+
+void printValueWithUnit(float value, const char* unit) {
+  char buffer[10];
+  dtostrf(value, 6, 2, buffer);  // width=6, precision=2
+  lcd.print(buffer);
+  lcd.print(unit);
+}
+
+
+
 
 // Helper function for power calculation (you might have a direct power sensor)
 float calculatePower(float v, float i) {
@@ -343,8 +354,7 @@ int readTorque() {
   }
 
   // Constants
-  const float g = 9.81;           // Acceleration due to gravity (m/s^2)
-  const float armLength = 100.0;  // Arm length in millimeters
+  const float g = 9.81;  // Acceleration due to gravity (m/s^2)
 
   // Convert grams to kg
   float mass_kg = grams / 1000.0;
@@ -432,9 +442,8 @@ void logData() {
         if (dataFile) {
           dataFile.println("Timestamp,RPM,Torque(Nmm),Voltage(V),Current(A),Power(W)");
           dataFile.close();
-          Serial.println("Headers written to data.csv");
         } else {
-          Serial.println("Error creating/opening data.csv for headers");
+          updateLcd("SD Card Error", "Please Restart");
           return;
         }
       }
@@ -456,9 +465,8 @@ void logData() {
         dataFile.println(_power);
 
         dataFile.close();
-        Serial.println("Data logged to data.csv");
       } else {
-        Serial.println("Error opening data.csv for writing");
+        updateLcd("SD Card Error", "Please Restart");
       }
     }
   }
