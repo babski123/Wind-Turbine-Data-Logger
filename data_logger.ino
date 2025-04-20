@@ -55,7 +55,7 @@ volatile unsigned long lastPulseTime = 0;
 unsigned int rpm = 0;
 int prevTorque = 999;
 int prevRpm = -1;
-const float armLength = 100.0;  // Arm length in millimeters to measure torque
+const float armLength = 90.0;  // Arm length in millimeters to measure torque
 
 unsigned long lastSensorsUpdate = 0;
 
@@ -341,32 +341,33 @@ int readRPM() {
     previousPulseCount = currentPulseCount;
     lastTime = currentTime;
   }
-  return rpm;
+  return rpm / 3;
 }
 
 int readTorque() {
   // Read force in grams from the load cell
   float grams = scale.get_units();
 
-  // Ignore negative values
-  if (grams < 0) {
+  // Ignore positive values
+  if (grams > 0) {
     return 0;
   }
 
   // Constants
-  const float g = 9.81;  // Acceleration due to gravity (m/s^2)
+  const float g = 9.81;   // Acceleration due to gravity (m/s^2)
+  const float armLength = 50.0; // Example arm length in mm - make sure this is your actual value
 
   // Convert grams to kg
   float mass_kg = grams / 1000.0;
 
-  // Calculate force in Newtons
+  // Calculate force in Newtons (will be negative since grams is negative)
   float force_N = mass_kg * g;
 
-  // Torque in N·mm = Force (N) × Arm length (mm)
+  // Torque in N·mm = Force (N) × Arm length (mm) (will be negative)
   float torque_Nmm = force_N * armLength;
 
-  // Return as integer
-  return (int)torque_Nmm;
+  // Return the absolute value as an integer
+  return (int)abs(torque_Nmm);
 }
 
 
